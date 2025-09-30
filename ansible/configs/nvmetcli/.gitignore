@@ -1,0 +1,12 @@
+*.swp
+*.swo
+build-stamp
+build/*
+dist/*
+*.pyc
+*.pyc
+
+# generated documentation
+Documentation/*.1
+Documentation/*.xml
+Documentation/*.html

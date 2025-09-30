@@ -1,0 +1,63 @@
+nvmetcli
+========
+This contains the NVMe target admin tool "nvmetcli".  It can either be
+used interactively by invoking it without arguments, or it can be used
+to save, restore or clear the current NVMe target configuration.
+
+Installation
+------------
+Please install the configshell-fb package from
+https://github.com/open-iscsi/configshell-fb first.
+
+nvmetcli can be run directly from the source directory or installed
+using setup.py.
+
+Common Package Dependencies and Problems
+-----------------------------------------
+Both python2 and python3 are supported via use of the 'python-six'
+package.
+
+nvmetcli uses the 'pyparsing' package -- running nvmetcli without this
+package may produce hard-to-decipher errors.
+
+Usage
+-----
+Look at Documentation/nvmetcli.txt for details.
+
+Example NVMe Target .json files
+--------------------------------------
+To load the loop + explicit host version above do the following:
+
+  ./nvmetcli restore loop.json
+
+Or to load the rdma + no host authentication version do the following
+after you've ensured that the IP address in rdma.json fits your setup:
+
+  ./nvmetcli restore rdma.json
+
+Or to load the fc + no host authentication version do the following
+after you've ensured that the port traddr FC address information in
+fc.json fits your setup:
+
+  ./nvmetcli restore fc.json
+
+Or to load the tcp + no host authentication version do the following
+after you've ensured that the IP address in tcp.json fits your setup:
+
+  ./nvmetcli restore tcp.json
+
+These files can also be edited directly using your favorite editor.
+
+Testing
+-------
+nvmetcli comes with a testsuite that tests itself and the kernel configfs
+interface for the NVMe target.  To run it make sure you have nose2 and
+the coverage plugin for it installed and simple run 'make test'.  To run all
+the tests you also need some test block devices or files.  Default is to
+use /dev/ram0 and /dev/ram1.  You can override default with environmental
+variable eg. NVMET_TEST_DEVICES="/dev/sdk,/dev/sdj" make test .
+
+Development
+-----------------
+Please send patches and bug reports to linux-nvme@lists.infradead.org for
+review and acceptance.

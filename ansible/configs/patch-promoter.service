@@ -1,0 +1,14 @@
+[Unit]
+Description=Change tcp target to rdma target
+After=drbd-reactor.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'sed -i "s/type=tcp/type=rdma/g" /etc/drbd-reactor.d/linstor-gateway-nvmeof-rg-pve0.toml || true'
+ExecStart=/usr/bin/systemctl reload drbd-reactor.service
+ExecStart=/bin/sh -c 'drbd-reactorctl disable && drbd-reactorctl enable'
+
+
+[Install]
+WantedBy=multi-user.target

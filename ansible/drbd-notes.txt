@@ -1,0 +1,215 @@
+$346.62 3x Lenovo tiny M720Q
+$228.963 for p520w 64GB ram
+$167.46 2x64GB ecc ram 
+164.27 p520 no ram
+$35.94 2x16gb ecc ram 
+$116.58 2x pcie bifur (ASUS Hyper M.2)
+$439.9 4 1.92TB m.2 nvme drives (PM983)
+$662.46 4x14TB drives
+$294.67 Startech25U Rack
+$92.54  rack rails
+$103.88 1 sx6036 40/56 gbE switch
+$84.55 5 NF-A4x20 fans (silent fan mod for sx6036)
+$105.74 5 DAC cables
+$70.6 5 40 gig cx3pro NICs 
+
+Total: $2,914.17
+
+Lenovo m720Q as compute nodes 
+Lenovo P520s as nvme/RDMA Mirrored SANs using drbd
+
+
+
+#on Mellanox switch
+dcb priority-flow-control priority 3 enable
+
+
+
+###RESTORING PROXMOX CONNECTION#############
+echo "discover -t rdma -a 192.168.20.51 -s 4420" | tee -a /etc/nvme/discovery.conf
+systemctl enable --now nvmf-autoconnect.service
+
+nvme discover -t rdma -a 192.168.20.51 -s 4420
+nvme connect -t rdma -n schemesec:nvme:rg-pve0 -a 192.168.20.51 -s 4420
+nvme list
+
+#from one host
+vgcreate nvme_vg /dev/nvme1n1
+
+
+
+
+drbd relevant links
+https://linbit.com/blog/configuring-highly-available-nvme-of-attached-storage-in-proxmox-ve/
+https://kb.linbit.com/drbd/drbd-9/mitigate-not-sending-and-no-receive-window-messages-when-using-drbd-with-rdma/
+https://forums.linbit.com/t/is-rdma-possible-with-a-tcp-tiebreaker/507/4
+
+
+
+
+sed -i -E 's/(portno=)4420(\s+protocol=)tcp/\14791\2udp/g;s/(type=)tcp/\1rdma/g' /etc/drbd-reactor.d/linstor-gateway-nvmeof-rg-pve0.toml
+drbd-reactorctl disable && drbd-reactorctl enable
+
+
+ibutils
+ibutils-libs    
+opensm-libs    
+opensm
+libibmad5
+infiniband-diags    
+perftest
+mstflint
+rdma-core    
+
+
+grep -Ev '^\s*(#|$)' /etc/modules-load.d/nvme.conf | xargs -r -n1 modprobe
+
+drbd-reactorctl disable && drbd-reactorctl enable
+
+
+update-initramfs -u -k all
+
+#rpool/ROOT/pve-1@post-setup2 old
+
+zfs snapshot rpool/ROOT/pve-1@updated
+zfs list -t snapshot 
+
+update-initramfs -u -k all
+
+zfs snapshot rpool/ROOT/pve-1@updated
+
+
+###################rollback for ansible scripts##################
+#pvs1
+zfs rollback -r rpool/ROOT/pve-1@updated && echo b > /proc/sysrq-trigger
+
+
+#pvs2
+zfs rollback -r rpool/ROOT/pve-1@updated && echo b > /proc/sysrq-trigger
+
+
+ansible-playbook -i ./inventory/hosts.ini playbook.yaml -u root -k -vv
+
+
+
+
+
+
+#read RoCE version
+HCA="$(ls /sys/class/infiniband | head -n1)"
+mount -t configfs none /sys/kernel/config
+mkdir -p /sys/kernel/config/rdma_cm/$HCA
+cd /sys/kernel/config/rdma_cm/$HCA
+cat /sys/kernel/config/rdma_cm/$HCA/ports/1/default_roce_mode
+cat /sys/kernel/config/rdma_cm/$HCA/ports/2/default_roce_mode
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+root@pvs1:~# history
+    1  ls
+    2  ls
+    3  qmrestore /root/vzdump-qemu-120-2025_09_03-17_45_33.vma.zst 100 --storage local
+    4  qmrestore /root/vzdump-qemu-120-2025_09_03-17_45_33.vma.zst 100 --storage local-zfs
+    5  df -h
+    6  zpool list
+    7  zfs list
+    8  zpool status
+    9  cd /dev/disk/by-id/
+   10  ls
+   11  ls
+   12  zpool status -P
+   13  ls -altr
+   14  df -h
+   15  df
+   16  strace df -h
+   17  df -h
+   18  ls
+   19  cd /dev/
+   20  ls
+   21  cd /disk
+   22  cd /dev/disk/
+   23  ls
+   24  cd by-label/
+   25  ls
+   26  ls -altr
+   27  zpool status -P
+   28  zpool import | grep rpool-OLD -A5
+   29  zpool labelclear -f /dev/nvme1n1p3
+   30  fdisk /dev/nvme1n1
+   31  zlist
+   32  z list
+   33  zfs list
+   34  apt update
+   35  apt upgrade
+   36  qmrestore /root/vzdump-qemu-120-2025_09_03-17_45_33.vma.zst 100 --storage local-zfs
+   37  ls
+   38  cat /etc/modules
+   39  cat << EOF >> /etc/modules
+   40  vfio
+   41  vfio_iommu_type1
+   42  vfio_pci
+   43  EOF
+   44  cat /etc/modules
+   45  vim.tiny /etc/default/grub
+   46  update-initramfs -u -k all
+   47  reboot
+   48  cat /etc/default/grub
+   49  cat /etc/modules
+   50  apt isntall dos2unix
+   51  apt install dos2unix
+   52  update-initramfs -u -k all
+   53  reboot
+   54  zfs list -t snapshot
+   55  apt update && apt upgrade
+   56  update-initramfs -u -k all
+   57  reboot
+   58  linstor node-connection drbd-peer-options --transport tcp pvs1 pvs3
+   59  linstor node-connection drbd-peer-options --transport tcp pvs2 pvs3
+   60  linstor node-connection drbd-peer-options --transport rdma pvs1 pvs2 
+   61  linstor-gateway nvme list   
+   62  dmesg
+   63  linstor resource-group drbd-options pve_rg0 --transport tcp
+   64  linstor node set-property pvs3 AutoplaceTarget false
+   65  linstor resource-connection drbd-peer-options --transport rdma pvs1 pvs2 rg-pve0
+   66  dmesg
+   67  linstor resource-connection drbd-peer-options --sndbuf-size 10M --rcvbuf-size 10M --max-buffers 8096 pvs1 pvs2 rg-pve0
+   68  linstor resource adjust rg-pve0 --nodes pvs1,pvs2
+   69  dmesg
+   70  dmesg
+   71  ls
+   72  drbdsetup status rg-pve0 --verbose | egrep -i 'connection|transport|role|quorum'
+   73  history
+root@pvs1:~# 
+

@@ -1,0 +1,754 @@
+#!/usr/bin/python
+
+'''
+Frontend to access to the NVMe target configfs hierarchy
+
+Copyright (c) 2016 by HGST, a Western Digital Company.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may
+not use this file except in compliance with the License. You may obtain
+a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS, WITHOUT
+WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied. See the
+License for the specific language governing permissions and limitations
+under the License.
+'''
+
+from __future__ import print_function
+
+import os
+import sys
+import configshell_fb as configshell
+import nvmet as nvme
+import errno
+from string import hexdigits
+import uuid
+
+
+def ngiud_set(nguid):
+    return any(c in hexdigits and c != '0' for c in nguid)
+
+
+class UINode(configshell.node.ConfigNode):
+    def __init__(self, name, parent=None, cfnode=None, shell=None):
+        configshell.node.ConfigNode.__init__(self, name, parent, shell)
+        self.cfnode = cfnode
+        if self.cfnode:
+            if self.cfnode.attr_groups:
+                for group in self.cfnode.attr_groups:
+                    self._init_group(group)
+        self.refresh()
+
+    def _init_group(self, group):
+        setattr(self.__class__, "ui_getgroup_%s" % group,
+                lambda self, attr:
+                    self.cfnode.get_attr(group, attr))
+        setattr(self.__class__, "ui_setgroup_%s" % group,
+                lambda self, attr, value:
+                    self.cfnode.set_attr(group, attr, value))
+
+        attrs = self.cfnode.list_attrs(group)
+        attrs_ro = self.cfnode.list_attrs(group, writable=False)
+        for attr in attrs:
+            writable = attr not in attrs_ro
+
+            name = "ui_desc_%s" % group
+            t, d = getattr(self.__class__, name, {}).get(attr, ('string', ''))
+            self.define_config_group_param(group, attr, t, d, writable)
+
+    def refresh(self):
+        self._children = set([])
+
+    def status(self):
+        return "None"
+
+    def ui_command_refresh(self):
+        '''
+        Refreshes and updates the objects tree from the current path.
+        '''
+        self.refresh()
+
+    def ui_command_status(self):
+        '''
+        Displays the current node's status summary.
+
+        SEE ALSO
+        ========
+        B{ls}
+        '''
+        self.shell.log.info("Status for %s: %s" % (self.path, self.status()))
+
+    def ui_command_saveconfig(self, savefile=None):
+        '''
+        Saves the current configuration to a file so that it can be restored
+        on next boot.
+        '''
+        node = self
+        while node.parent is not None:
+            node = node.parent
+        node.cfnode.save_to_file(savefile)
+
+
+class UIRootNode(UINode):
+    def __init__(self, shell):
+        UINode.__init__(self, '/', parent=None, cfnode=nvme.Root(),
+                        shell=shell)
+
+    def refresh(self):
+        self._children = set([])
+        UISubsystemsNode(self)
+        UIPortsNode(self)
+        UIHostsNode(self)
+
+    def ui_command_restoreconfig(self, savefile=None, clear_existing=False):
+        '''
+        Restores configuration from a file.
+        '''
+        errors = self.cfnode.restore_from_file(savefile, clear_existing)
+        self.refresh()
+
+        if errors:
+            raise configshell.ExecutionError(
+                "Configuration restored, %d errors:\n%s" %
+                (len(errors), "\n".join(errors)))
+
+
+class UISubsystemsNode(UINode):
+    def __init__(self, parent):
+        UINode.__init__(self, 'subsystems', parent)
+
+    def refresh(self):
+        self._children = set([])
+        for subsys in self.parent.cfnode.subsystems:
+            UISubsystemNode(self, subsys)
+
+    def ui_command_create(self, nqn=None):
+        '''
+        Creates a new target. If I{nqn} is omitted, then the new Subsystem
+        will be created using a randomly generated NQN.
+
+        SEE ALSO
+        ========
+        B{delete}
+        '''
+        subsystem = nvme.Subsystem(nqn, mode='create')
+        UISubsystemNode(self, subsystem)
+
+    def ui_command_delete(self, nqn):
+        '''
+        Recursively deletes the subsystem with the specified I{nqn}, and all
+        objects hanging under it.
+
+        SEE ALSO
+        ========
+        B{create}
+        '''
+        subsystem = nvme.Subsystem(nqn, mode='lookup')
+        subsystem.delete()
+        self.refresh()
+
+
+class UISubsystemNode(UINode):
+    ui_desc_attr = {
+        'allow_any_host': ('string', 'Allow access by any host if set to 1'),
+        'serial': ('string', 'Export serial number to hosts'),
+        'version': ('string', 'Export version number to hosts'),
+    }
+
+    def __init__(self, parent, cfnode):
+        UINode.__init__(self, cfnode.nqn, parent, cfnode)
+
+    def refresh(self):
+        self._children = set([])
+        UINamespacesNode(self)
+        UIAllowedHostsNode(self)
+
+    def summary(self):
+        info = []
+        info.append("version=" + self.cfnode.get_attr("attr", "version"))
+        info.append("allow_any=" +
+                    self.cfnode.get_attr("attr", "allow_any_host"))
+        info.append("serial=" + self.cfnode.get_attr("attr", "serial"))
+        return (", ".join(info), True)
+
+
+class UINamespacesNode(UINode):
+    def __init__(self, parent):
+        UINode.__init__(self, 'namespaces', parent)
+
+    def refresh(self):
+        self._children = set([])
+        for ns in self.parent.cfnode.namespaces:
+            UINamespaceNode(self, ns)
+
+    def ui_command_create(self, nsid=None):
+        '''
+        Creates a new namespace. If I{nsid} is omitted, then the next
+        available namespace id will be used.
+
+        SEE ALSO
+        ========
+        B{delete}
+        '''
+        namespace = nvme.Namespace(self.parent.cfnode, nsid, mode='create')
+        UINamespaceNode(self, namespace)
+
+    def ui_command_delete(self, nsid):
+        '''
+        Recursively deletes the namespace with the specified I{nsid}, and all
+        objects hanging under it.
+
+        SEE ALSO
+        ========
+        B{create}
+        '''
+        namespace = nvme.Namespace(self.parent.cfnode, nsid, mode='lookup')
+        namespace.delete()
+        self.refresh()
+
+
+class UINamespaceNode(UINode):
+    ui_desc_device = {
+        'path': ('string', 'Backing device path.'),
+        'nguid': ('string', 'Namspace Global Unique Identifier.'),
+        'uuid': ('string', 'Namespace Universally Unique Identifier.'),
+    }
+
+    def __init__(self, parent, cfnode):
+        UINode.__init__(self, str(cfnode.nsid), parent, cfnode)
+
+    def status(self):
+        if self.cfnode.get_enable():
+            return "enabled"
+        return "disabled"
+
+    def ui_command_enable(self):
+        '''
+        Enables the current Namespace.
+
+        SEE ALSO
+        ========
+        B{disable}
+        '''
+        if self.cfnode.get_enable():
+            self.shell.log.info("The Namespace is already enabled.")
+        else:
+            try:
+                self.cfnode.set_enable(1)
+                self.shell.log.info("The Namespace has been enabled.")
+            except Exception as e:
+                raise configshell.ExecutionError(
+                    "The Namespace could not be enabled.")
+
+    def ui_command_disable(self):
+        '''
+        Disables the current Namespace.
+
+        SEE ALSO
+        ========
+        B{enable}
+        '''
+        if not self.cfnode.get_enable():
+            self.shell.log.info("The Namespace is already disabled.")
+        else:
+            try:
+                self.cfnode.set_enable(0)
+                self.shell.log.info("The Namespace has been disabled.")
+            except Exception as e:
+                raise configshell.ExecutionError(
+                    "The Namespace could not be disabled.")
+
+    def ui_command_grpid(self, grpid):
+        '''
+        Sets the ANA Group ID of the current Namespace to I{grpid}
+        '''
+        try:
+            self.cfnode.set_grpid(grpid)
+        except Exception as e:
+            raise configshell.ExecutionError(
+                "Failed to set ANA Group ID for this Namespace.")
+
+    def summary(self):
+        info = []
+        info.append("path=" + self.cfnode.get_attr("device", "path"))
+        ns_uuid = self.cfnode.get_attr("device", "uuid")
+        if uuid.UUID(ns_uuid).int != 0:
+            info.append("uuid=" + str(ns_uuid))
+        ns_nguid = self.cfnode.get_attr("device", "nguid")
+        if ngiud_set(ns_nguid):
+            info.append("nguid=" + ns_nguid)
+        if self.cfnode.grpid != 0:
+            info.append("grpid=" + str(self.cfnode.grpid))
+        info.append("enabled" if self.cfnode.get_enable() else "disabled")
+        ns_enabled = self.cfnode.get_enable()
+        return (", ".join(info), True if ns_enabled == 1 else ns_enabled)
+
+
+class UIAllowedHostsNode(UINode):
+    def __init__(self, parent):
+        UINode.__init__(self, 'allowed_hosts', parent)
+
+    def refresh(self):
+        self._children = set([])
+        for host in self.parent.cfnode.allowed_hosts:
+            UIAllowedHostNode(self, host)
+
+    def ui_command_create(self, nqn):
+        '''
+        Grants access to parent subsystems to the host specified by I{nqn}.
+
+        SEE ALSO
+        ========
+        B{delete}
+        '''
+        self.parent.cfnode.add_allowed_host(nqn)
+        UIAllowedHostNode(self, nqn)
+
+    def ui_complete_create(self, parameters, text, current_param):
+        completions = []
+        if current_param == 'nqn':
+            for host in self.get_node('/hosts').children:
+                completions.append(host.cfnode.nqn)
+
+        if len(completions) == 1:
+            return [completions[0] + ' ']
+        else:
+            return completions
+
+    def ui_command_delete(self, nqn):
+        '''
+        Recursively deletes the namespace with the specified I{nsid}, and all
+        objects hanging under it.
+
+        SEE ALSO
+        ========
+        B{create}
+        '''
+        self.parent.cfnode.remove_allowed_host(nqn)
+        self.refresh()
+
+    def ui_complete_delete(self, parameters, text, current_param):
+        completions = []
+        if current_param == 'nqn':
+            for nqn in self.parent.cfnode.allowed_hosts:
+                completions.append(nqn)
+
+        if len(completions) == 1:
+            return [completions[0] + ' ']
+        else:
+            return completions
+
+
+class UIAllowedHostNode(UINode):
+    def __init__(self, parent, nqn):
+        UINode.__init__(self, nqn, parent)
+
+
+class UIPortsNode(UINode):
+    def __init__(self, parent):
+        UINode.__init__(self, 'ports', parent)
+
+    def refresh(self):
+        self._children = set([])
+        for port in self.parent.cfnode.ports:
+            UIPortNode(self, port)
+
+    def ui_command_create(self, portid=None):
+        '''
+        Creates a new NVMe port with portid I{portid}.
+
+        SEE ALSO
+        ========
+        B{delete}
+        '''
+        port = nvme.Port(portid, mode='create')
+        UIPortNode(self, port)
+
+    def ui_command_delete(self, portid):
+        '''
+        Recursively deletes the NVMe Port with the specified I{port}, and all
+        objects hanging under it.
+
+        SEE ALSO
+        ========
+        B{create}
+        '''
+        port = nvme.Port(portid, mode='lookup')
+        port.delete()
+        self.refresh()
+
+
+class UIPortNode(UINode):
+    ui_desc_addr = {
+        'adrfam': ('string', 'Address Family (e.g. ipv4 or fc)'),
+        'treq': ('string', 'Transport Security Requirements'),
+        'traddr': ('string',
+                   'Transport Address (e.g. IP Address or FC wwnn:wwpn)'),
+        'trsvcid': ('string', 'Transport Service ID (e.g. IP Port)'),
+        'trtype': ('string', 'Transport Type (e.g. rdma or loop or fc)'),
+    }
+    ui_desc_param = {
+        'inline_data_size': ('string', 'Port inline data size in bytes'),
+    }
+
+    def __init__(self, parent, cfnode):
+        UINode.__init__(self, str(cfnode.portid), parent, cfnode)
+        UIPortSubsystemsNode(self)
+        try:
+            next(cfnode.ana_groups)
+        except StopIteration:
+            pass
+        else:
+            UIANAGroupsNode(self)
+        UIReferralsNode(self)
+
+    def summary(self):
+        info = []
+        info.append("trtype=" + self.cfnode.get_attr("addr", "trtype"))
+        info.append("traddr=" + self.cfnode.get_attr("addr", "traddr"))
+        trsvcid = self.cfnode.get_attr("addr", "trsvcid")
+        if trsvcid != "none":
+            info.append("trsvcid=%s" % trsvcid)
+
+        '''
+        Support older target driver w/o the inline_data_size parameter
+        '''
+        try:
+            inline_data_size = self.cfnode.get_attr("param", "inline_data_size")
+        except Exception as e:
+            inline_data_size = "n/a"
+        if inline_data_size != "n/a":
+            info.append("inline_data_size=" + inline_data_size)
+        enabled = self.cfnode.subsystems or list(self.cfnode.referrals)
+        return (", ".join(info), True if enabled else 0)
+
+
+class UIPortSubsystemsNode(UINode):
+    def __init__(self, parent):
+        UINode.__init__(self, 'subsystems', parent)
+
+    def refresh(self):
+        self._children = set([])
+        for host in self.parent.cfnode.subsystems:
+            UIPortSubsystemNode(self, host)
+
+    def ui_command_create(self, nqn):
+        '''
+        Grants access to the subsystem specified by I{nqn} through the
+        parent port.
+
+        SEE ALSO
+        ========
+        B{delete}
+        '''
+        self.parent.cfnode.add_subsystem(nqn)
+        UIPortSubsystemNode(self, nqn)
+
+    def ui_complete_create(self, parameters, text, current_param):
+        completions = []
+        if current_param == 'nqn':
+            for subsys in self.get_node('/subsystems').children:
+                completions.append(subsys.cfnode.nqn)
+
+        if len(completions) == 1:
+            return [completions[0] + ' ']
+        else:
+            return completions
+
+    def ui_command_delete(self, nqn):
+        '''
+        Removes access to the subsystem specified by I{nqn} through the
+        parent port.
+
+        SEE ALSO
+        ========
+        B{create}
+        '''
+        self.parent.cfnode.remove_subsystem(nqn)
+        self.refresh()
+
+    def ui_complete_delete(self, parameters, text, current_param):
+        completions = []
+        if current_param == 'nqn':
+            for nqn in self.parent.cfnode.subsystems:
+                completions.append(nqn)
+
+        if len(completions) == 1:
+            return [completions[0] + ' ']
+        else:
+            return completions
+
+
+class UIPortSubsystemNode(UINode):
+    def __init__(self, parent, nqn):
+        UINode.__init__(self, nqn, parent)
+
+
+class UIReferralsNode(UINode):
+    def __init__(self, parent):
+        UINode.__init__(self, 'referrals', parent)
+
+    def refresh(self):
+        self._children = set([])
+        for r in self.parent.cfnode.referrals:
+            UIReferralNode(self, r)
+
+    def ui_command_create(self, name):
+        '''
+        Creates a new referral.
+
+        SEE ALSO
+        ========
+        B{delete}
+        '''
+        r = nvme.Referral(self.parent.cfnode, name, mode='create')
+        UIReferralNode(self, r)
+
+    def ui_command_delete(self, name):
+        '''
+        Deletes the referral with the specified I{name}.
+
+        SEE ALSO
+        ========
+        B{create}
+        '''
+        r = nvme.Referral(self.parent.cfnode, name, mode='lookup')
+        r.delete()
+        self.refresh()
+
+
+class UIReferralNode(UINode):
+    ui_desc_addr = {
+        'adrfam': ('string', 'Address Family (e.g. ipv4 or fc)'),
+        'treq': ('string', 'Transport Security Requirements'),
+        'traddr': ('string',
+                   'Transport Address (e.g. IP Address or FC wwnn:wwpn)'),
+        'trsvcid': ('string', 'Transport Service ID (e.g. IP Port)'),
+        'trtype': ('string', 'Transport Type (e.g. rdma or loop or fc)'),
+        'portid': ('number', 'Port identifier'),
+    }
+
+    def __init__(self, parent, cfnode):
+        UINode.__init__(self, cfnode.name, parent, cfnode)
+
+    def status(self):
+        if self.cfnode.get_enable():
+            return "enabled"
+        return "disabled"
+
+    def ui_command_enable(self):
+        '''
+        Enables the current Referral.
+
+        SEE ALSO
+        ========
+        B{disable}
+        '''
+        if self.cfnode.get_enable():
+            self.shell.log.info("The Referral is already enabled.")
+        else:
+            try:
+                self.cfnode.set_enable(1)
+                self.shell.log.info("The Referral has been enabled.")
+            except Exception as e:
+                raise configshell.ExecutionError(
+                    "The Referral could not be enabled.")
+
+    def ui_command_disable(self):
+        '''
+        Disables the current Referral.
+
+        SEE ALSO
+        ========
+        B{enable}
+        '''
+        if not self.cfnode.get_enable():
+            self.shell.log.info("The Referral is already disabled.")
+        else:
+            try:
+                self.cfnode.set_enable(0)
+                self.shell.log.info("The Referral has been disabled.")
+            except Exception as e:
+                raise configshell.ExecutionError(
+                    "The Referral could not be disabled.")
+
+
+class UIANAGroupsNode(UINode):
+    def __init__(self, parent):
+        UINode.__init__(self, 'ana_groups', parent)
+
+    def refresh(self):
+        self._children = set([])
+        for a in self.parent.cfnode.ana_groups:
+            UIANAGroupNode(self, a)
+
+    def ui_command_create(self, grpid):
+        '''
+        Creates a new ANA Group.
+
+        SEE ALSO
+        ========
+        B{delete}
+        '''
+        a = nvme.ANAGroup(self.parent.cfnode, grpid, mode='create')
+        UIANAGroupNode(self, a)
+
+    def ui_command_delete(self, grpid):
+        '''
+        Deletes the ANA Group with the specified I{name}.
+
+        SEE ALSO
+        ========
+        B{create}
+        '''
+        a = nvme.ANAGroup(self.parent.cfnode, grpid, mode='lookup')
+        a.delete()
+        self.refresh()
+
+
+class UIANAGroupNode(UINode):
+    ui_desc_ana = {
+        'state' : ('string', 'ANA state'),
+    }
+
+    def __init__(self, parent, cfnode):
+        UINode.__init__(self, str(cfnode.grpid), parent, cfnode)
+
+    def summary(self):
+        info = []
+        info.append("state=" + self.cfnode.get_attr("ana", "state"))
+        return (", ".join(info), True)
+
+class UIHostsNode(UINode):
+    def __init__(self, parent):
+        UINode.__init__(self, 'hosts', parent)
+
+    def refresh(self):
+        self._children = set([])
+        for host in self.parent.cfnode.hosts:
+            UIHostNode(self, host)
+
+    def ui_command_create(self, nqn):
+        '''
+        Creates a new NVMe host.
+
+        SEE ALSO
+        ========
+        B{delete}
+        '''
+        host = nvme.Host(nqn, mode='create')
+        UIHostNode(self, host)
+
+    def ui_command_delete(self, nqn):
+        '''
+        Recursively deletes the NVMe Host with the specified I{nqn}, and all
+        objects hanging under it.
+
+        SEE ALSO
+        ========
+        B{create}
+        '''
+        host = nvme.Host(nqn, mode='lookup')
+        host.delete()
+        self.refresh()
+
+
+class UIHostNode(UINode):
+    def __init__(self, parent, cfnode):
+        UINode.__init__(self, cfnode.nqn, parent, cfnode)
+
+
+def usage():
+    print("syntax: %s save [file_to_save_to]" % sys.argv[0])
+    print("        %s restore [file_to_restore_from]" % sys.argv[0])
+    print("        %s clear" % sys.argv[0])
+    print("        %s ls" % sys.argv[0])
+    sys.exit(-1)
+
+
+def save(to_file):
+    nvme.Root().save_to_file(to_file)
+
+
+def restore(from_file):
+    errors = None
+
+    try:
+        errors = nvme.Root().restore_from_file(from_file)
+    except IOError as e:
+        if not from_file:
+            from_file = nvme.DEFAULT_SAVE_FILE
+
+        if e.errno == errno.ENOENT:
+            # Not an error if the restore file is not present
+            print("No saved config file at %s, ok, exiting" % from_file)
+            sys.exit(0)
+        else:
+            print("Error processing config file at %s, error %s, exiting" %
+                  (from_file, str(e)))
+            sys.exit(1)
+
+    # These errors are non-fatal
+    for error in errors:
+        print(error)
+
+    sys.exit(0)
+
+
+def clear(unused):
+    nvme.Root().clear_existing()
+
+
+def ls(unused):
+    shell = configshell.shell.ConfigShell('~/.nvmetcli')
+    UIRootNode(shell)
+    shell.run_cmdline("ls")
+    sys.exit(0)
+
+
+funcs = dict(save=save, restore=restore, clear=clear, ls=ls)
+
+
+def main():
+    if os.geteuid() != 0:
+        print("%s: must run as root." % sys.argv[0], file=sys.stderr)
+        sys.exit(-1)
+
+    if len(sys.argv) > 3:
+        usage()
+
+    if len(sys.argv) == 2 or len(sys.argv) == 3:
+        if sys.argv[1] == "--help":
+            usage()
+
+        if sys.argv[1] not in funcs.keys():
+            usage()
+
+        if len(sys.argv) == 3:
+            savefile = sys.argv[2]
+        else:
+            savefile = None
+
+        funcs[sys.argv[1]](savefile)
+        return
+
+    try:
+        shell = configshell.shell.ConfigShell('~/.nvmetcli')
+        UIRootNode(shell)
+    except Exception as msg:
+        shell.log.error(str(msg))
+        return
+
+    while not shell._exit:
+        try:
+            shell.run_interactive()
+        except Exception as msg:
+            shell.log.error(str(msg))
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,9 @@
+[Unit]
+Description=Change tcp to rdma
+
+[Path]
+PathChanged=/etc/drbd-reactor.d
+TriggerLimitIntervalSec=0
+
+[Install]
+WantedBy=multi-user.target

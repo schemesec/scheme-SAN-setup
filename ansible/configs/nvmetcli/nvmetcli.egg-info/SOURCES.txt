@@ -1,0 +1,12 @@
+COPYING
+README
+nvmetcli
+setup.cfg
+setup.py
+nvmet/__init__.py
+nvmet/nvme.py
+nvmet/test_nvmet.py
+nvmetcli.egg-info/PKG-INFO
+nvmetcli.egg-info/SOURCES.txt
+nvmetcli.egg-info/dependency_links.txt
+nvmetcli.egg-info/top_level.txt

@@ -1,0 +1,13 @@
+Metadata-Version: 2.4
+Name: nvmetcli
+Version: 0.8
+Summary: NVMe target configuration tool
+Maintainer: Christoph Hellwig
+Maintainer-email: hch@lst.de
+License: Apache 2.0
+License-File: COPYING
+Dynamic: license
+Dynamic: license-file
+Dynamic: maintainer
+Dynamic: maintainer-email
+Dynamic: summary
