@@ -1,0 +1,13 @@
+[Unit]
+DefaultDependencies=no
+After=nss-lookup.target
+Before=nvmf-autoconnect.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=sh -c 'until ping -c 1 192.168.20.51; do sleep 1; done'
+
+[Install]
+WantedBy=nvmf-autoconnect.service
+

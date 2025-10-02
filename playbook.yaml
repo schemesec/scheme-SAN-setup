@@ -36,3 +36,12 @@
   hosts: controller
   tasks:
     - script: scripts/7.patch-drbd-reactor.sh
+
+- name: Patch nvme-discovery
+  hosts: pve_clients
+  tasks:
+    - script: scripts/8.patch-nvme-discovery.sh
+
+  
+
+    
