@@ -7,7 +7,7 @@ $116.58 2x pcie bifur (ASUS Hyper M.2)
 $439.9 4 1.92TB m.2 nvme drives (PM983)
 $662.46 4x14TB drives
 $294.67 Startech25U Rack
-$92.54  rack rails
+$92.54 rack rails
 $103.88 1 sx6036 40/56 gbE switch
 $84.55 5 NF-A4x20 fans (silent fan mod for sx6036)
 $105.74 5 DAC cables
