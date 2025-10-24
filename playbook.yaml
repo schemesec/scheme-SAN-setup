@@ -32,8 +32,8 @@
   tasks:
     - script: scripts/5.setup-rdma-target.sh
 
-- name: Patch drbd-reactor (all), Changes tcp to rdma
-  hosts: controller
+- name: Patch drbd-reactor (gateways), Changes tcp to rdma
+  hosts: gateways
   tasks:
     - script: scripts/6.patch-drbd-reactor.sh
 
