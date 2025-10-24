@@ -8,39 +8,39 @@
         mode: "0644"
         directory_mode: "0755"
 
-    - script: scripts/2.install-configs.sh
+    - script: scripts/1.install-configs.sh
 
 
 - name: Install-linstor
   hosts: all
   tasks:
-    - script: scripts/3.install-linstor.sh
+    - script: scripts/2.install-linstor.sh
 
 - name: Controller up first
   hosts: controller
   tasks:
-    - script: scripts/4.linstor-controller-setup.sh
+    - script: scripts/3.linstor-controller-setup.sh
 
 
 - name: Gateway install
   hosts: all
   tasks:
-    - script: scripts/5.linstor-gateway-setup.sh
+    - script: scripts/4.linstor-gateway-setup.sh
 
 - name: Create NVMe target (controller)
   hosts: controller
   tasks:
-    - script: scripts/6.setup-rdma-target.sh
+    - script: scripts/5.setup-rdma-target.sh
 
 - name: Patch drbd-reactor (all), Changes tcp to rdma
   hosts: controller
   tasks:
-    - script: scripts/7.patch-drbd-reactor.sh
+    - script: scripts/6.patch-drbd-reactor.sh
 
 - name: Patch nvme-discovery
   hosts: pve_clients
   tasks:
-    - script: scripts/8.patch-nvme-discovery.sh
+    - script: scripts/7.patch-nvme-discovery.sh
 
   
 
