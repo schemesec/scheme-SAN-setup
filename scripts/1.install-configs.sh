@@ -1,6 +1,6 @@
 #!/bin/bash
 
-apt-get update
+apt-get update -y
 apt-get dist-upgrade -y
 
 apt install -y python3 python3-cffi python3-pyparsing git python-is-python3  python3-pip python3-setuptools libibverbs-dev

@@ -1,5 +1,5 @@
 - name: Install Configs
-  hosts: all
+  hosts: pvs_clients
   tasks:
     - name: Copy configs to /root/schemelin
       copy:
@@ -12,7 +12,7 @@
 
 
 - name: Install-linstor
-  hosts: all
+  hosts: pvs_clients
   tasks:
     - script: scripts/2.install-linstor.sh
 
@@ -23,7 +23,7 @@
 
 
 - name: Gateway install
-  hosts: all
+  hosts: pvs_clients
   tasks:
     - script: scripts/4.linstor-gateway-setup.sh
 
