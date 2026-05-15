@@ -7,7 +7,7 @@ Before=nvmf-autoconnect.service
 Type=oneshot
 RemainAfterExit=yes
 TimeoutStartSec=60s
-ExecStart=/bin/sh -c 'until ping -c1 -W1 192.168.20.51; do sleep 1; done'
+ExecStart=/bin/sh -c 'until ping -c1 -W1 linstor.home.schemesec.com; do sleep 1; done'
 
 [Install]
 WantedBy=nvmf-autoconnect.service
